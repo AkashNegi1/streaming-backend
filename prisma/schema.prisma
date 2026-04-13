@@ -1,0 +1,132 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum VideoStatus {
+  PROCESSING
+  READY
+  FAILED
+}
+
+model User {
+  id              String   @id @default(uuid())
+  email           String   @unique
+  password        String
+  role            Role     @default(USER)
+  name            String?
+  picture         String?
+
+  googleId        String?  @unique
+  
+  subscription    Subscription?
+  watchHistory    WatchHistory[]
+  payments        Payment[]
+
+  videosCreated   Video[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Subscription {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  status      SubscriptionStatus
+  planName    String
+  startDate   DateTime
+  endDate     DateTime
+
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+model Video {
+  id            String   @id @default(uuid())
+  title         String
+  description   String?
+  thumbnailUrl  String?
+  duration      Int?
+  status        VideoStatus @default(PROCESSING)
+  originalUrl   String
+  createdById   String
+  createdBy     User     @relation(fields: [createdById], references: [id])
+  streamUrl     String?
+  qualities     VideoQuality[]
+  watchHistory  WatchHistory[]
+  categories    VideoCategory[]
+
+  createdAt     DateTime @default(now())
+}
+
+model VideoQuality {
+  id        String  @id @default(uuid())
+  videoId   String
+  quality   String  // 1080p, 720p, 480p
+  playlist  String  // m3u8 path in MinIO
+
+  video     Video   @relation(fields: [videoId], references: [id])
+}
+
+model WatchHistory {
+  id        String   @id @default(uuid())
+  userId    String
+  videoId   String
+  progress  Int      // seconds watched
+
+  user      User     @relation(fields: [userId], references: [id])
+  video     Video    @relation(fields: [videoId], references: [id])
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, videoId])
+}
+
+model Payment {
+  id            String   @id @default(uuid())
+  userId        String
+  amount        Float
+  paymentMethod String
+  status        String
+  transactionId String
+
+  user          User     @relation(fields: [userId], references: [id])
+
+  createdAt     DateTime @default(now())
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  name      String   @unique
+
+  videos    VideoCategory[]
+}
+
+model VideoCategory {
+  videoId     String
+  categoryId  String
+
+  video       Video    @relation(fields: [videoId], references: [id])
+  category    Category @relation(fields: [categoryId], references: [id])
+
+  @@id([videoId, categoryId])
+}

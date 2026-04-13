@@ -1,0 +1,23 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install FFmpeg for video transcoding
+RUN apk add --no-cache ffmpeg
+
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+COPY . .
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Copy dist from builder if it exists, otherwise build
+# For simplicity, we'll copy dist from the main build
+# You may need to run build first or use a multi-stage build
+
+ENV NODE_ENV=production
+
+# Worker entry point
+CMD ["node", "dist/workers/video.worker.js"]

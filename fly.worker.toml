@@ -1,0 +1,21 @@
+app = "netflix-worker"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[env]
+  NODE_ENV = "production"
+
+[processes]
+  worker = "node dist/workers/video.worker.js"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[[mounts]]
+  source = "ffmpeg_temp"
+  destination = "/tmp"
+  initial_size = "5gb"
