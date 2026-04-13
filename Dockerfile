@@ -28,4 +28,4 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Run migrations then start the server
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+CMD ["sh", "-c", "npx prisma migrate deploy --schema prisma/schema.prisma --url $SUPABASE_URL && node dist/main"]
