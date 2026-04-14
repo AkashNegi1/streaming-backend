@@ -28,4 +28,4 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Run migrations then start the server
-CMD ["node", "dist/main"]
+CMD ["node", "dist/src/main.js"]
