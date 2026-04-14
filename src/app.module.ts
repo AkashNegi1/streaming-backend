@@ -6,10 +6,9 @@ import { UsersModule } from './users/users.module.js';
 import { PrismaService } from './prisma.service.js'
 import { JwtAuthGuard } from './auth/jwt-auth.guard.js';
 import { VideosModule } from './videos/videos.module.js';
-import { MinioService } from './storage/minio.service.js';
 @Module({
   imports: [AuthModule, UsersModule, VideosModule],
   controllers: [AppController],
-  providers: [AppService, PrismaService, JwtAuthGuard, MinioService],
+  providers: [AppService, PrismaService, JwtAuthGuard],
 })
 export class AppModule {}
