@@ -53,7 +53,8 @@ export class VideosService {
 
         await videoQueue.add("transcode-video",{
             videoId: video.id,
-            path: path
+            path: path,
+            removeOnComplete: true,
         })
 
         return video 
@@ -130,7 +131,6 @@ export class VideosService {
             id: video.id,
             title: video.title,
             description: video.description,
-            thumbnailUrl: video.thumbnailUrl,
             duration: video.duration,
             streamUrl: video.streamUrl
         };
