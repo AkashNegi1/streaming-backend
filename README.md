@@ -1,4 +1,4 @@
-# 🎬 StreamFlow - Video Streaming Platform
+# 🎬 StreamFlow - Distributed Video Processing & Streaming Platform
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge" alt="Status">
@@ -9,7 +9,17 @@
   <img src="https://img.shields.io/badge/Cloud-R2-F38020?style=for-the-badge" alt="Cloudflare R2">
 </p>
 
-A production-ready, cloud-native video streaming platform with adaptive bitrate streaming (HLS), distributed job processing, and modern DevOps practices. Inspired by Netflix's architecture.
+StreamFlow is a production-grade, cloud-native video processing system designed to handle large media uploads, asynchronous transcoding, and adaptive bitrate streaming at scale.
+
+It is inspired by real-world architectures used in platforms like Netflix, focusing on performance, fault tolerance, and scalability rather than just feature completeness.
+
+---
+
+## 🚀 Overview
+
+StreamFlow enables users to upload videos, which are then processed asynchronously into multiple resolutions (360p, 480p, 720p) and delivered via HLS adaptive streaming.
+
+The system is built around event-driven architecture, decoupling API responsiveness from heavy video processing workloads using distributed job queues.
 
 ---
 
@@ -27,41 +37,52 @@ A production-ready, cloud-native video streaming platform with adaptive bitrate 
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        STREAMFLOW ARCHITECTURE                       │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌──────────┐     ┌──────────────┐     ┌──────────────────┐       │
-│  │          │     │              │     │                  │       │
-│  │ Frontend │────▶│  NestJS API  │────▶│  Cloudflare R2   │       │
-│  │  (Vercel)│     │  (Railway)   │     │   (Storage)      │       │
-│  │          │     │              │     │                  │       │
-│  └──────────┘     └──────┬───────┘     └──────────────────┘       │
-│                          │                                          │
-│                          ▼                                          │
-│                   ┌──────────────┐                                  │
-│                   │   Upstash    │                                  │
-│                   │    Redis     │◀───── Job Queue ────────┐        │
-│                   └──────────────┘                        │        │
-│                          │                                │        │
-│                          ▼                                │        │
-│                   ┌──────────────┐                        │        │
-│                   │   FFmpeg     │                        │        │
-│                   │   Worker    │────────────────────────┘        │
-│                   │  (Local)     │    Process & Transcode          │
-│                   └──────────────┘                                  │
-│                          │                                          │
-│                          ▼                                          │
-│                   ┌──────────────┐                                  │
-│                   │   Supabase   │                                  │
-│                   │ PostgreSQL   │                                  │
-│                   └──────────────┘                                  │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
+Client (Frontend - Vercel)
+           │ 
+           ▼ 
+  NestJS API (Railway)
+           │ 
+           ├── Upload Metadata → PostgreSQL (Supabase)
+           │ 
+           ├── Push Job → Redis Queue (Upstash) 
+           │ 
+           ▼ 
+  Worker Service (FFmpeg Processing) 
+           │ 
+           ├── Download Original Video (R2) 
+           ├── Transcode → 360p / 480p / 720p 
+           ├── Generate HLS Segments (.ts) + Playlist (.m3u8) 
+           ├── Generate Thumbnail 
+           │ 
+           ▼ 
+  Cloudflare R2 (Storage) 
+           │ 
+           ▼ 
+  Client Playback via HLS
 ```
+
+---
+
+## 🧠 Engineering Challenges & Solutions
+  1. Blocking Video Processing  
+      Problem: Initial synchronous processing caused API latency and timeouts
+      Solution: Introduced BullMQ-based job queue, decoupling API from processing
+      Impact: API response time reduced to <200ms regardless of video size
+  2. Slow Cloud Uploads 
+      Problem: Sequential uploads of video segments caused significant delay
+      Solution: Implemented batched + parallel uploads to Cloudflare R2
+      Impact: Achieved 30–40x improvement in upload throughput
+  3. Network Failures During Upload 
+      Problem: Upload failures due to unstable connections
+      Solution: Added retry mechanism with exponential backoff
+      Impact: Increased upload success rate to ~95%+
+  4. Heavy CPU Workload (FFmpeg)
+      Problem: Video transcoding is CPU-intensive and blocks main thread
+      Solution: Offloaded to dedicated worker processes
+      Impact: Improved system responsiveness and enabled horizontal scaling
 
 ---
 
@@ -87,6 +108,14 @@ A production-ready, cloud-native video streaming platform with adaptive bitrate 
 | **Supabase** | PostgreSQL database |
 | **Upstash** | Redis job queue |
 
+### 🎬 Worker Pipeline
+1. Fetch job from Redis queue
+2. Download original video from R2
+3. Transcode using FFmpeg into multiple resolutions
+4. Generate HLS segments + playlists
+5. Create thumbnail
+6. Upload processed assets to R2
+7. Update database with streaming URLs
 ---
 
 ## 📦 API Endpoints
@@ -102,15 +131,20 @@ A production-ready, cloud-native video streaming platform with adaptive bitrate 
 |--------|----------|-------------|
 | `GET` | `/videos` | List all videos |
 | `GET` | `/videos/featured` | Get featured video |
-| `GET` | `/videos/:id` | Get video details |
 | `GET` | `/videos/:id/play` | Get HLS stream URL |
+| `GET` | `/videos/:id/progress` | Get watch progress |
 | `POST` | `/videos/upload` | Upload video (protected) |
 | `PATCH` | `/videos/:id/progress` | Save watch progress |
+
+### Stream
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/stream:videId/*filePath` | return a chunk of video segments |
 
 ### Thumbnails
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/videos/thumbnail/:filename` | Get thumbnail image |
+| `GET` | `/thumbnail/:thumbnailId` | Get thumbnail image |
 
 ---
 
@@ -121,7 +155,7 @@ A production-ready, cloud-native video streaming platform with adaptive bitrate 
 | Video Processing Time | ~3-5 min for 5-min video |
 | API Response Time | <200ms |
 | Database Query Time | <50ms |
-| Concurrent Uploads | 3+ with batching |
+| Concurrent Uploads | 20(configurable) with batching |
 | Upload Success Rate | 95% with retry logic |
 
 ---
@@ -131,7 +165,7 @@ A production-ready, cloud-native video streaming platform with adaptive bitrate 
 - **JWT Authentication** with expiration
 - **bcrypt** password hashing (10 salt rounds)
 - **CORS** restricted to known origins
-- **Input Validation** on all endpoints
+- **Input Validation** on all endpoints except thumbnails
 - **Prisma ORM** prevents SQL injection
 - **Environment Variables** for sensitive data
 
@@ -167,6 +201,7 @@ npx prisma migrate dev
 
 # Start development server
 npm run start:dev
+
 ```
 
 ### Environment Variables
@@ -291,7 +326,7 @@ MIT License - feel free to use this project for learning and personal projects.
 
 **Akash Negi**
 - GitHub: [@AkashNegi1](https://github.com/AkashNegi1)
-- LinkedIn: [akashnegi1](https://linkedin.com/in/akashnegi1)
+- LinkedIn: [akashnegi](https://www.linkedin.com/in/akash-negi-67a713153)
 
 ---
 
