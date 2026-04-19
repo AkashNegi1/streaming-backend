@@ -203,6 +203,18 @@ npx prisma migrate dev
 npm run start:dev
 
 ```
+### ⚠️ Note on Video Processing
+
+* The video processing worker currently runs locally due to compute constraints.
+
+* The deployed version supports:
+  - Video playback
+  - API interactions
+  - System architecture demonstration
+
+* To test full pipeline (upload → processing → streaming), run the worker locally using:
+
+- npm run worker
 
 ### Environment Variables
 
