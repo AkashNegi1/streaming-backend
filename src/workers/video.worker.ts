@@ -54,7 +54,7 @@ const worker = new Worker(
       );
 
       await runffmpeg(
-        `ffmpeg -i "${localPath}" -vf "select=eq(n\\,0),scale=640:360" -frames:v 1 "${thumbnailPath}"`,
+        `ffmpeg -ss 00:00:03 -i "${localPath}" -vf "select='gt(scene,0.4)',scale=640:360" -frames:v 1 "${thumbnailPath}"`,
       );
 
       await storage.uploadFile(
