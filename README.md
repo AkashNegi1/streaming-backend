@@ -68,21 +68,21 @@ Client (Frontend - Vercel)
 
 ## 🧠 Engineering Challenges & Solutions
   1. Blocking Video Processing  
-      Problem: Initial synchronous processing caused API latency and timeouts
-      Solution: Introduced BullMQ-based job queue, decoupling API from processing
-      Impact: API response time reduced to <200ms regardless of video size
+      - Problem: Initial synchronous processing caused API latency and timeouts
+      - Solution: Introduced BullMQ-based job queue, decoupling API from processing
+      - Impact: API response time reduced to <200ms regardless of video size
   2. Slow Cloud Uploads 
-      Problem: Sequential uploads of video segments caused significant delay
-      Solution: Implemented batched + parallel uploads to Cloudflare R2
-      Impact: Achieved 30–40x improvement in upload throughput
+      - Problem: Sequential uploads of video segments caused significant delay
+      - Solution: Implemented batched + parallel uploads to Cloudflare R2
+      - Impact: Achieved 30–40x improvement in upload throughput
   3. Network Failures During Upload 
-      Problem: Upload failures due to unstable connections
-      Solution: Added retry mechanism with exponential backoff
-      Impact: Increased upload success rate to ~95%+
+      - Problem: Upload failures due to unstable connections
+      - Solution: Added retry mechanism with exponential backoff
+      - Impact: Increased upload success rate to ~95%+
   4. Heavy CPU Workload (FFmpeg)
-      Problem: Video transcoding is CPU-intensive and blocks main thread
-      Solution: Offloaded to dedicated worker processes
-      Impact: Improved system responsiveness and enabled horizontal scaling
+      - Problem: Video transcoding is CPU-intensive and blocks main thread
+      - Solution: Offloaded to dedicated worker processes
+      - Impact: Improved system responsiveness and enabled horizontal scaling
 
 ---
 
