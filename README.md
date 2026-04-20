@@ -159,6 +159,52 @@ Client (Frontend - Vercel)
 | Upload Success Rate | 95% with retry logic |
 
 ---
+## ⚡ Performance & Benchmarking
+
+To evaluate system performance, we benchmarked the video processing pipeline with both CPU-based and GPU-accelerated transcoding.
+
+### 🧪 Test Configuration
+Input: ~3.5 min AV1 video (~1.4 Mbps)
+Output: HLS (360p, 480p, 720p)
+Environment: Local worker (RTX 3070 Ti for GPU mode)
+Storage: Cloudflare R2
+Queue: BullMQ (Redis)
+
+### 📊 Results
+| Metric | CPU (libx264) |	GPU (NVENC) |
+|--------|---------------|--------------|
+| Transcoding Time |	32 sec |	21.7 sec |
+| Thumbnail Time |	0.33 sec |	0.33 sec |
+| Upload Time |	13.1 sec	| 13.7 sec |
+| Total Processing Time |	49.5 sec |	39 sec |
+
+### 🚀 Key Improvements
+##### ⚡ ~47% faster transcoding using NVIDIA NVENC
+##### ⏱️ ~24% reduction in total pipeline latency
+##### 🔁 Maintained reliability with retry logic + job queues
+##### 🧠 Key Insight: Bottleneck Shift
+
+- Initially, transcoding dominated the pipeline (~65%).
+
+- ** After GPU acceleration:
+
+- Transcoding dropped to ~55%
+- Upload became the new bottleneck (~35%)
+
+- This highlights a classic distributed systems pattern:
+optimizing one stage exposes the next bottleneck.
+
+### 🔧 Optimization Techniques
+- GPU-accelerated encoding using CUDA + NVENC
+- Multi-resolution parallel transcoding via FFmpeg filter graphs
+- Batched & concurrent uploads to Cloudflare R2
+- Benchmark instrumentation for latency tracking
+
+## 📈 Next Steps
+- Parallelize encoding across workers (per resolution)
+- Stream-based upload during transcoding (reduce idle time)
+- Optimize network throughput for faster uploads
+---
 
 ## 🔐 Security Features
 
