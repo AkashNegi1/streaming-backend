@@ -12,11 +12,15 @@ dotenv.config();
 const storageFactory = new StorageFactory();
 const storage = storageFactory.createStorageService();
 const prisma = new PrismaService();
+const now = () => Number(process.hrtime.bigint()) / 1e6; // ms
 console.log('WORKER: Script starting...');
+
 const worker = new Worker(
   'video-processing',
   async (job) => {
-    console.log('=== WORKER: Job received ===');
+    
+
+    // 🔽 Download
     const { videoId, path: objectKey } = job.data;
     const objectName = objectKey.replace(new RegExp(`netflix-videos/`), '');
     // const objectName = objectKey.replace(new RegExp(`videos/`), '');
@@ -26,6 +30,7 @@ const worker = new Worker(
     const outputPath = `./tmp/hls/${videoId}`;
     const thumbnailPath = `./tmp/${videoId}-thumbnail.jpg`;
     try {
+
       fs.mkdirSync(outputPath, { recursive: true });
       console.log('=== WORKER: Starting download ===');
       await storage.downloadFile(
@@ -33,30 +38,22 @@ const worker = new Worker(
         objectName,
         localPath,
       );
-      const {
-        width: w360,
-        height: h360,
-        bitrate: b360,
-      } = FFPROBE.QUALITIES[360];
-      const {
-        width: w480,
-        height: h480,
-        bitrate: b480,
-      } = FFPROBE.QUALITIES[480];
-      const {
-        width: w720,
-        height: h720,
-        bitrate: b720,
-      } = FFPROBE.QUALITIES[720];
+
+      // 🔽 Transcoding
+
+      const useGPU = process.env.USE_GPU === 'true';
+      console.log(`⚙️ Mode: ${useGPU ? 'GPU (NVENC)' : 'CPU'}`);
 
       await runffmpeg(
-        `ffmpeg -i "${localPath}" -filter_complex "[0:v]split=3[v1][v2][v3];[v1]scale=w=${w360}:h=${h360}[v360];[v2]scale=w=${w480}:h=${h480}[v480];[v3]scale=w=${w720}:h=${h720}[v720]" -map "[v360]" -map a:0 -b:v:0 ${b360}k -map "[v480]" -map a:0 -b:v:1 ${b480}k -map "[v720]" -map a:0 -b:v:2 ${b720}k -preset veryfast -var_stream_map "v:0,a:0 v:1,a:1 v:2,a:2" -master_pl_name master.m3u8 -f hls -hls_time ${FFPROBE.HLS_TIME} -hls_playlist_type vod -hls_segment_filename "${outputPath}/v%v/segment_%03d.ts" "${outputPath}/v%v/index.m3u8"`,
+        localPath,outputPath,useGPU,'TRANSCODE'
       );
+
+      //🔽 Thumbnail generation
 
       await runffmpeg(
-        `ffmpeg -ss 00:00:03 -i "${localPath}" -vf "select='gt(scene,0.4)',scale=640:360" -frames:v 1 "${thumbnailPath}"`,
+        localPath,thumbnailPath,useGPU,'THUMBNAIL'
       );
-
+      
       await storage.uploadFile(
         `${process.env.R2_BUCKET}`,
         `thumbnails/${videoId}.jpg`,
@@ -88,9 +85,11 @@ const worker = new Worker(
       };
 
       const allFilesToUpload = getAllFiles(outputPath);
-     
+
       const BATCH_SIZE = 20;
 
+      // 🔽 Upload
+      const uploadStart = now();
       console.log(
         `**** WORKER: Starting concurrent uploads of ${allFilesToUpload.length} files ****`,
       );

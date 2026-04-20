@@ -21,9 +21,9 @@ export const FFPROBE = {
   THUMBNAIL_HEIGHT: 360,
   HLS_TIME: 6,
   QUALITIES: {
-    360: { width: 640, height: 360, bitrate: 800000 },
-    480: { width: 854, height: 480, bitrate: 1200000 },
-    720: { width: 1280, height: 720, bitrate: 2400000 },
+    360: { width: 640, height: 360, bitrate: 800 },
+    480: { width: 854, height: 480, bitrate: 1200 },
+    720: { width: 1280, height: 720, bitrate: 2400 },
   },
 } as const;
 
