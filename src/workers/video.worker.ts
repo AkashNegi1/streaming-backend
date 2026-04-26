@@ -5,7 +5,7 @@ import { StorageFactory } from '../storage/storage-factory.js';
 import path from 'path';
 import dotenv from 'dotenv';
 import { PrismaService } from '../prisma.service.js';
-import { FFPROBE } from '../constants.js';
+import chokidar from 'chokidar';
 
 dotenv.config();
 
@@ -18,42 +18,95 @@ console.log('WORKER: Script starting...');
 const worker = new Worker(
   'video-processing',
   async (job) => {
-    
-
-    // 🔽 Download
+    //  Download
     const { videoId, path: objectKey } = job.data;
     const objectName = objectKey.replace(new RegExp(`netflix-videos/`), '');
-    // const objectName = objectKey.replace(new RegExp(`videos/`), '');
-    console.log('Video ID:', videoId);
-    console.log('Object Key:', objectKey);
     const localPath = `./tmp/${path.basename(objectKey)}`;
     const outputPath = `./tmp/hls/${videoId}`;
     const thumbnailPath = `./tmp/${videoId}-thumbnail.jpg`;
     try {
-
       fs.mkdirSync(outputPath, { recursive: true });
       console.log('=== WORKER: Starting download ===');
+      await job.updateProgress(0);
       await storage.downloadFile(
         `${process.env.R2_BUCKET}`,
         objectName,
         localPath,
       );
+      await job.updateProgress(10);
 
-      // 🔽 Transcoding
+      const activeUploads: Promise<any>[] = [];
+      let filesUploaded = 0;
+      let failedUploads = 0;
+      const processedFiles = new Set<string>();
+      console.log('👀 Starting Chokidar Watcher...');
+      const watcher = chokidar.watch(outputPath, {
+        ignored: /(^|[\/\\])\../,
+        persistent: true,
+        awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 100 },
+      });
+      watcher.on('add', (filePath) => {
+        if (processedFiles.has(filePath)) {
+           // Silently ignore the duplicate event
+           return; 
+        }
+        if (filePath.endsWith('.ts')) {
+          const relativePath = path
+            .relative(outputPath, filePath)
+            .replace(/\\/g, '/');
+          const r2Key = `streams/${videoId}/${relativePath}`;
+
+          console.log(`🚀 Instant Upload triggered: ${relativePath}`);
+          // Wrap your existing retry logic in an async IIFE (Immediately Invoked Function Expression)
+            const uploadTask = (async () => {
+              const retry = 3;
+              let attempts = 0;
+              while (attempts < retry) {
+                try {
+                  await storage.uploadFile(
+                    `${process.env.R2_BUCKET}`,
+                    r2Key,
+                    filePath,
+                  );
+                  filesUploaded++;
+                  break; // Success! Exit the retry loop.
+                } catch (error) {
+                  attempts++;
+                  if (attempts >= retry) {
+                    failedUploads++;
+                    console.error(
+                      `Failed to upload ${r2Key} after 3 attempts.`,
+                    );
+                    throw error; // This ensures Promise.allSettled catches the rejection
+                  }
+                  await new Promise((res) => setTimeout(res, 1000));
+                }
+              }
+            })();
+
+            activeUploads.push(uploadTask);
+          
+        }
+      });
+      //  Transcoding
 
       const useGPU = process.env.USE_GPU === 'true';
       console.log(`⚙️ Mode: ${useGPU ? 'GPU (NVENC)' : 'CPU'}`);
 
-      await runffmpeg(
-        localPath,outputPath,useGPU,'TRANSCODE'
-      );
+      let lastBroadcastedPercent = -1;
+      await runffmpeg(localPath, outputPath, useGPU, 'TRANSCODE', async (percent) => {
+        // Math: Base (10) + (FFmpeg Percent * 0.8 weight)
+        const absoluteProgress = Math.floor(10 + (percent * 0.8)); 
+        if(absoluteProgress > lastBroadcastedPercent){
+          lastBroadcastedPercent = absoluteProgress;
+          await job.updateProgress(absoluteProgress);
+        }
+      });
 
-      //🔽 Thumbnail generation
+      //Thumbnail generation
 
-      await runffmpeg(
-        localPath,thumbnailPath,useGPU,'THUMBNAIL'
-      );
-      
+      await runffmpeg(localPath, thumbnailPath, useGPU, 'THUMBNAIL');
+
       await storage.uploadFile(
         `${process.env.R2_BUCKET}`,
         `thumbnails/${videoId}.jpg`,
@@ -67,10 +120,19 @@ const worker = new Worker(
         },
       });
 
-      const getAllFiles = (
-        dir: string,
-        prefix = '',
-      ): { fullPath: string; key: string }[] => {
+      
+ 
+      // Cleanup & Final Playlists 90% -> 100%
+      console.log(`⏳ Waiting for ${activeUploads.length - filesUploaded} trailing chunk uploads to finish...`);
+      await watcher.close(); // Stop listening for new files
+      
+      const uploadResults = await Promise.allSettled(activeUploads);
+
+      if (failedUploads > 0) {
+        throw new Error(`Critical Failure: ${failedUploads} video chunks failed to upload to R2.`);
+      }
+      console.log('Uploading final master.m3u8 playlists...');
+      const getAllFiles = (dir: string, prefix = ''): { fullPath: string; key: string }[] => {
         let results: { fullPath: string; key: string }[] = [];
         const files = fs.readdirSync(dir);
         for (const file of files) {
@@ -78,57 +140,26 @@ const worker = new Worker(
           if (fs.statSync(full).isDirectory()) {
             results = results.concat(getAllFiles(full, `${prefix}${file}/`));
           } else {
-            results.push({ fullPath: full, key: `${prefix}${file}` });
+            results.push({ fullPath: full, key: `${prefix}${file}`.replace(/\\/g, '/') });
           }
         }
         return results;
       };
 
-      const allFilesToUpload = getAllFiles(outputPath);
+      const allFiles = getAllFiles(outputPath);
+      const playlists = allFiles.filter(f => f.key.endsWith('.m3u8'));
 
-      const BATCH_SIZE = 20;
-
-      // 🔽 Upload
-      const uploadStart = now();
-      console.log(
-        `**** WORKER: Starting concurrent uploads of ${allFilesToUpload.length} files ****`,
-      );
-      for (let i = 0; i < allFilesToUpload.length; i += BATCH_SIZE) {
-        const batch = allFilesToUpload.slice(i, i + BATCH_SIZE);
-
-        const uploadPromises = batch.map(async ({ fullPath, key }) => {
-          console.log(
-            `[BATCH ${Math.ceil((i + 1) / BATCH_SIZE)}] Starting: ${key}`,
-          );
-          const retry = 3;
-          let attempts = 0;
-          while (attempts < retry) {
-            try {
-              await storage.uploadFile(
-                `${process.env.R2_BUCKET}`,
-                `streams/${videoId}/${key}`,
-                fullPath,
-              );
-              break;
-            } catch (error) {
-              attempts++;
-              if (attempts < retry) {
-                await new Promise((res) => setTimeout(res, 1000));
-              } else {
-                throw new Error(
-                  `Failed to upload ${key} after ${retry} attempts`,
-                );
-              }
-            }
-          }
-        });
-        await Promise.allSettled(uploadPromises);
-        console.log(
-          `Uploaded batch ${Math.ceil(i / BATCH_SIZE) + 1} of ${Math.ceil(allFilesToUpload.length / BATCH_SIZE)}`,
+      for (const playlist of playlists) {
+        await storage.uploadFile(
+          `${process.env.R2_BUCKET}`,
+          `streams/${videoId}/${playlist.key}`,
+          playlist.fullPath
         );
       }
-      console.log(`**** Worker: all files are uploaded sucessfully ****`);
 
+      console.log(`**** Worker: All files uploaded successfully ****`);
+
+      
       await prisma.video.update({
         where: { id: videoId },
         data: {
@@ -136,6 +167,7 @@ const worker = new Worker(
           streamUrl: `streams/${videoId}/master.m3u8`,
         },
       });
+      await job.updateProgress(100);
     } catch (error) {
       console.error(`=== WORKER: Error processing video ${videoId} ===`, error);
 
