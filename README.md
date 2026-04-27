@@ -86,29 +86,43 @@ Users no longer wait blindly — they see live progress.
 ---
 ## 🏗️ System Architecture
 
-```
-Client (Frontend - Vercel)
-           │ 
-           ▼ 
-  NestJS API (Railway)
-           │ 
-           ├── Upload Metadata → PostgreSQL (Supabase)
-           │ 
-           ├── Push Job → Redis Queue (Upstash) 
-           │ 
-           ▼ 
-  Worker Service (FFmpeg Processing) 
-           │ 
-           ├── Download Original Video (R2) 
-           ├── Transcode → 360p / 480p / 720p 
-           ├── Generate HLS Segments (.ts) + Playlist (.m3u8) 
-           ├── Generate Thumbnail 
-           │ 
-           ▼ 
-  Cloudflare R2 (Storage) 
-           │ 
-           ▼ 
-  Client Playback via HLS
+```mermaid
+graph TD
+    %% Define Nodes
+    Client[Client Frontend<br/>React / Vercel]
+    API[NestJS API Gateway<br/>Railway]
+    DB[(PostgreSQL<br/>Supabase)]
+    Redis[(Redis Pub/Sub & Queue<br/>Upstash)]
+    Worker[Worker Service<br/>FFmpeg NVENC]
+    R2[(Cloudflare R2<br/>Object Storage)]
+
+    %% Core Upload Flow
+    Client -->|1. Uploads Video| API
+    API -->|2. Saves Metadata| DB
+    API -->|3. Dispatches Job| Redis
+    Redis -->|4. Polls for Job| Worker
+    
+    %% Worker Processing
+    Worker -->|5. Downloads Source| R2
+    Worker -->|6. Parallel HLS Transcode<br/>360p / 480p / 720p| R2
+    Worker -->|7. Extracts Thumbnail & Preview| R2
+    
+    %% The Real-time Magic (What makes you stand out)
+    Worker -.->|8. Emits Progress %| Redis
+    Redis -.->|9. Broadcasts Event| API
+    API -.->|10. WebSockets Sync UI| Client
+    
+    %% Playback
+    Client <-->|11. Streams via HLS| R2
+
+    %% Styling
+    classDef primary fill:#1e1e1e,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef storage fill:#0d47a1,stroke:#64b5f6,stroke-width:2px,color:#fff;
+    classDef worker fill:#b71c1c,stroke:#ef5350,stroke-width:2px,color:#fff;
+    
+    class Client,API primary;
+    class DB,Redis,R2 storage;
+    class Worker worker;
 ```
 
 ---
@@ -340,7 +354,7 @@ R2_BUCKET=netflix-videos
 JWT_SECRET=your-super-secret-key
 
 # CORS
-CORS_ORIGINS=http://localhost:5173,https://your-frontend.vercel.app
+CORS_ORIGINS=https://your-frontend.vercel.app
 ```
 
 ---
@@ -377,7 +391,7 @@ The React frontend is available separately:
 
 | Component | URL |
 |-----------|-----|
-| **Frontend** | [https://streaming-frontend-fsre52kto-akashnegi1s-projects.vercel.app](https://streaming-frontend-fsre52kto-akashnegi1s-projects.vercel.app) |
+| **Frontend** | [https://streaming-frontend-fawn.vercel.app](https://streaming-frontend-fawn.vercel.app) |
 | **Backend API** | [https://netflix-backend-production-892d.up.railway.app](https://netflix-backend-production-892d.up.railway.app) |
 
 ---
