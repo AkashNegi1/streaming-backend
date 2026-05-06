@@ -35,7 +35,7 @@ export class VideosController {
       videoId,
       req.user.userId,
     );
-    
+
     return {
       streamUrl: `/stream/${videoId}/master.m3u8?token=${token}`,
     };
@@ -68,6 +68,4 @@ export class VideosController {
   async getFeaturedVideo() {
     return this.videoService.getFeaturedVideo();
   }
-
-  
 }

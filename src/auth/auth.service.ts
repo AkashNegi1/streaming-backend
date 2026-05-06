@@ -43,6 +43,7 @@ export class AuthService {
     }
 
     async getSignedToken(videoId: string, userId: string){
+        
         const token = this.jwtService.sign({
             videoId,
             sub: userId

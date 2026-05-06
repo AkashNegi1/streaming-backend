@@ -10,7 +10,6 @@ export class ThumbnailController {
 
 @Get(':thumbnailId')
 async getThumbnail(@Param('thumbnailId') thumbnailId: string, @Res() res) {
-    console.log("here");
     
     const thumbnailPath = `thumbnails/${thumbnailId}.jpg`;
     try {

@@ -39,9 +39,5 @@ export class VideoGateway implements OnModuleInit {
         })
     })
   }
-  @SubscribeMessage('ping')
-  handlePing(@MessageBody() data: any): string {
-    console.log('Received  a ping from a client!', data);
-    return 'pong - the phone line is open!';
-  }
+  
 }
