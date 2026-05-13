@@ -12,21 +12,26 @@ dotenv.config();
 const storageFactory = new StorageFactory();
 const storage = storageFactory.createStorageService();
 const prisma = new PrismaService();
-const now = () => Number(process.hrtime.bigint()) / 1e6; // ms
-console.log('WORKER: Script starting...');
+const now = () => Number(process.hrtime.bigint()) / 1e6;
 
 const worker = new Worker(
   'video-processing',
   async (job) => {
-    //  Download
+    /*
+     * Extract job data: videoId identifies the DB record,
+     * path is the R2 object key for the uploaded source video.
+     */
     const { videoId, path: objectKey } = job.data;
     const objectName = objectKey.replace(new RegExp(`netflix-videos/`), '');
     const localPath = `./tmp/${path.basename(objectKey)}`;
     const outputPath = `./tmp/hls/${videoId}`;
     const thumbnailPath = `./tmp/${videoId}-thumbnail.jpg`;
     try {
+      /*
+       * Step 1: Download the source video from R2 to local disk.
+       * Progress goes from 0% to 10%.
+       */
       fs.mkdirSync(outputPath, { recursive: true });
-      console.log('=== WORKER: Starting download ===');
       await job.updateProgress(0);
       await storage.downloadFile(
         `${process.env.R2_BUCKET}`,
@@ -35,11 +40,15 @@ const worker = new Worker(
       );
       await job.updateProgress(10);
 
+      /*
+       * Step 2: Watch the HLS output directory for new .ts segments.
+       * Each segment is uploaded to R2 immediately as FFmpeg produces it,
+       * so uploads overlap with transcoding instead of waiting until the end.
+       */
       const activeUploads: Promise<any>[] = [];
       let filesUploaded = 0;
       let failedUploads = 0;
       const processedFiles = new Set<string>();
-      console.log('👀 Starting Chokidar Watcher...');
       const watcher = chokidar.watch(outputPath, {
         ignored: /(^|[\/\\])\../,
         persistent: true,
@@ -47,8 +56,7 @@ const worker = new Worker(
       });
       watcher.on('add', (filePath) => {
         if (processedFiles.has(filePath)) {
-           // Silently ignore the duplicate event
-           return; 
+          return;
         }
         if (filePath.endsWith('.ts')) {
           const relativePath = path
@@ -56,57 +64,65 @@ const worker = new Worker(
             .replace(/\\/g, '/');
           const r2Key = `streams/${videoId}/${relativePath}`;
 
-          console.log(`🚀 Instant Upload triggered: ${relativePath}`);
-          // Wrap your existing retry logic in an async IIFE (Immediately Invoked Function Expression)
-            const uploadTask = (async () => {
-              const retry = 3;
-              let attempts = 0;
-              while (attempts < retry) {
-                try {
-                  await storage.uploadFile(
-                    `${process.env.R2_BUCKET}`,
-                    r2Key,
-                    filePath,
+          const uploadTask = (async () => {
+            /*
+             * Retry up to 3 times with 1s delay between attempts.
+             * This handles transient R2 failures without failing the whole job.
+             */
+            const retry = 3;
+            let attempts = 0;
+            while (attempts < retry) {
+              try {
+                await storage.uploadFile(
+                  `${process.env.R2_BUCKET}`,
+                  r2Key,
+                  filePath,
+                );
+                filesUploaded++;
+                break;
+              } catch (error) {
+                attempts++;
+                if (attempts >= retry) {
+                  failedUploads++;
+                  console.error(
+                    `Failed to upload ${r2Key} after 3 attempts.`,
                   );
-                  filesUploaded++;
-                  break; // Success! Exit the retry loop.
-                } catch (error) {
-                  attempts++;
-                  if (attempts >= retry) {
-                    failedUploads++;
-                    console.error(
-                      `Failed to upload ${r2Key} after 3 attempts.`,
-                    );
-                    throw error; // This ensures Promise.allSettled catches the rejection
-                  }
-                  await new Promise((res) => setTimeout(res, 1000));
+                  throw error;
                 }
+                await new Promise((res) => setTimeout(res, 1000));
               }
-            })();
+            }
+          })();
 
-            activeUploads.push(uploadTask);
-          
+          activeUploads.push(uploadTask);
         }
       });
-      //  Transcoding
 
+      /*
+       * Step 3: Transcode the source video into HLS chunks using FFmpeg.
+       * Progress goes from 10% to 90% (maps FFmpeg's 0-100% to 10-90 window).
+       * GPU (NVENC) is used when USE_GPU=true, otherwise falls back to CPU.
+       */
       const useGPU = process.env.USE_GPU === 'true';
-      console.log(`⚙️ Mode: ${useGPU ? 'GPU (NVENC)' : 'CPU'}`);
 
       let lastBroadcastedPercent = -1;
       await runffmpeg(localPath, outputPath, useGPU, 'TRANSCODE', async (percent) => {
-        // Math: Base (10) + (FFmpeg Percent * 0.8 weight)
-        const absoluteProgress = Math.floor(10 + (percent * 0.8)); 
+        const absoluteProgress = Math.floor(10 + (percent * 0.8));
         if(absoluteProgress > lastBroadcastedPercent){
           lastBroadcastedPercent = absoluteProgress;
           await job.updateProgress(absoluteProgress);
         }
       });
 
-      //Thumbnail generation
-
+      /*
+       * Step 4: Generate a thumbnail from the source video.
+       * Uses FFmpeg to extract a single frame.
+       */
       await runffmpeg(localPath, thumbnailPath, useGPU, 'THUMBNAIL');
 
+      /*
+       * Step 5: Upload the thumbnail to R2 and save its URL in the database.
+       */
       await storage.uploadFile(
         `${process.env.R2_BUCKET}`,
         `thumbnails/${videoId}.jpg`,
@@ -120,18 +136,21 @@ const worker = new Worker(
         },
       });
 
-      
- 
-      // Cleanup & Final Playlists 90% -> 100%
-      console.log(`⏳ Waiting for ${activeUploads.length - filesUploaded} trailing chunk uploads to finish...`);
-      await watcher.close(); // Stop listening for new files
-      
-      const uploadResults = await Promise.allSettled(activeUploads);
+      /*
+       * Step 6: Wait for any in-flight chunk uploads to finish,
+       * then upload the .m3u8 playlist files (master + variant playlists).
+       */
+      await watcher.close();
+
+      await Promise.allSettled(activeUploads);
 
       if (failedUploads > 0) {
         throw new Error(`Critical Failure: ${failedUploads} video chunks failed to upload to R2.`);
       }
-      console.log('Uploading final master.m3u8 playlists...');
+
+      /*
+       * Recursively collect all files in the HLS output directory.
+       */
       const getAllFiles = (dir: string, prefix = ''): { fullPath: string; key: string }[] => {
         let results: { fullPath: string; key: string }[] = [];
         const files = fs.readdirSync(dir);
@@ -157,9 +176,10 @@ const worker = new Worker(
         );
       }
 
-      console.log(`**** Worker: All files uploaded successfully ****`);
-
-      
+      /*
+       * Step 7: Mark the video as READY in the database with its stream URL.
+       * Progress reaches 100%.
+       */
       await prisma.video.update({
         where: { id: videoId },
         data: {
@@ -171,6 +191,10 @@ const worker = new Worker(
     } catch (error) {
       console.error(`=== WORKER: Error processing video ${videoId} ===`, error);
 
+      /*
+       * On failure, mark the video as FAILED in the database so the frontend
+       * can show an appropriate status to the user.
+       */
       try {
         await prisma.video.update({
           where: { id: videoId },
@@ -182,7 +206,10 @@ const worker = new Worker(
 
       throw error;
     } finally {
-      console.log(`=== WORKER: Cleaning up temporary files for ${videoId} ===`);
+      /*
+       * Always clean up temporary files, even on failure.
+       * Prevents disk from filling up with orphaned transcodes.
+       */
       fs.rmSync(localPath, { force: true });
       fs.rmSync(thumbnailPath, { force: true });
       fs.rmSync(outputPath, { recursive: true, force: true });
@@ -201,6 +228,10 @@ const worker = new Worker(
   },
 );
 
+/*
+ * Gracefully disconnect from Prisma and exit on SIGINT
+ * so the worker can be shut down cleanly in containerized environments.
+ */
 process.on('SIGINT', async () => {
   await prisma.$disconnect();
   process.exit(0);

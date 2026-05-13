@@ -75,7 +75,7 @@ import { FFPROBE } from '../constants.js';
 
                     const percent = Math.floor((currentTimeSec / totalDurationSec) * 100);
                     console.log(percent);
-                    // Fire the callback, capping at 100% just in case of float rounding weirdness
+                    // Firing the callback, capping at 100% just in case of float rounding weirdness
                     onProgress(Math.min(percent, 100));
                 }
             }
