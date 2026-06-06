@@ -1,0 +1,21 @@
+name: Keep StreamFlow Backend Alive
+
+on:
+  schedule:
+    # Runs every 10 minutes.
+    # GitHub cron uses UTC time.
+    - cron: "*/10 * * * *"
+
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ping health endpoint
+        run: |
+          echo "Pinging StreamFlow backend..."
+          curl -L --fail --max-time 30 --retry 2 --retry-delay 5 \
+          https://streaming-backend-7xoh.onrender.com/health
+          echo "Ping completed."
