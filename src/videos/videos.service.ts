@@ -5,7 +5,7 @@ import { videoQueue } from '../queue/video.queue.js';
 import { StorageFactory } from '../storage/storage-factory.js';
 import { VIDEO } from '../constants.js';
 import { stat } from 'fs';
-
+const featuredVideoId = process.env.FEATURED_VIDEO_ID;
 interface VideoFile {
   originalname: string;
   buffer: Buffer;
@@ -129,20 +129,21 @@ export class VideosService {
 
   async getFeaturedVideo() {
     const video = await this.prisma.video.findFirst({
-      where: { status: 'READY' },
-      orderBy: { createdAt: 'desc' },
+      where: { status: 'READY', id: featuredVideoId },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        duration: true,
+        thumbnailUrl: true,
+        createdAt: true,
+      },
     });
 
     if (!video) {
       return null;
     }
 
-    return {
-      id: video.id,
-      title: video.title,
-      description: video.description,
-      duration: video.duration,
-      streamUrl: video.streamUrl,
-    };
+    return video;
   }
 }

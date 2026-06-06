@@ -9,10 +9,11 @@ import { UsersService } from '../users/users.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { StorageFactory } from '../storage/storage-factory.js';
 import { ThumbnailController } from './thumbnail.controller.js';
+import { PreviewController } from './preview.controller.js';
 import { VideoGateway } from './videos.gateway.js';
 @Module({
   imports: [AuthModule],
-  controllers: [VideosController, StreamController, ThumbnailController],
+  controllers: [VideosController, StreamController, ThumbnailController, PreviewController],
   providers: [VideosService,PrismaService,AuthService,UsersService,JwtAuthGuard,StorageFactory,VideoGateway]
 })
 export class VideosModule {}
